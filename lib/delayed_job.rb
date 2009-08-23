@@ -1,4 +1,6 @@
-autoload :ActiveRecord, 'activerecord'
+#autoload :ActiveRecord, 'activerecord'
+require "dm-core"
+require "benchmark"
 
 require File.dirname(__FILE__) + '/delayed/message_sending'
 require File.dirname(__FILE__) + '/delayed/performable_method'

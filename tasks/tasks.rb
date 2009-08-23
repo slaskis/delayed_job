@@ -1,3 +1,7 @@
+$:.unshift "#{File.expand_path(File.dirname(__FILE__))}/../lib"
+require 'rubygems'
+require 'delayed_job'
+
 # Re-definitions are appended to existing tasks
 task :environment
 task :merb_env

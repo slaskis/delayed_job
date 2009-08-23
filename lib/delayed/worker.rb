@@ -27,8 +27,9 @@ module Delayed
         realtime = Benchmark.realtime do
           result = Delayed::Job.work_off
         end
-
-        count = result.sum
+        
+        count = 0
+        result.each { |num| count += num }
 
         break if $exit
 

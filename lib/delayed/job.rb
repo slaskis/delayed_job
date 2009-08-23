@@ -5,10 +5,33 @@ module Delayed
 
   # A job object that is persisted to the database.
   # Contains the work object as a YAML field.
-  class Job < ActiveRecord::Base
+  class Job #< ActiveRecord::Base
+    include DataMapper::Resource
+    
+    property :id,           Serial
+    property :priority,     Integer, :default => 0
+    property :attempts,     Integer, :default => 0
+    property :handler,      Text
+    property :last_error,   String
+    property :run_at,       DateTime
+    property :locked_at,    DateTime
+    property :locked_by,    String
+    property :failed_at,    DateTime
+    
+    #table.integer  :priority, :default => 0
+    #table.integer  :attempts, :default => 0
+    #table.text     :handler
+    #table.string   :last_error
+    #table.datetime :run_at
+    #table.datetime :locked_at
+    #table.string   :locked_by
+    #table.datetime :failed_at
+    #table.timestamps
+    
+    
     MAX_ATTEMPTS = 25
-    MAX_RUN_TIME = 4.hours
-    set_table_name :delayed_jobs
+    MAX_RUN_TIME = 4 * 3600 # 4 hours
+    #set_table_name :delayed_jobs
 
     # By default failed jobs are destroyed after too many attempts.
     # If you want to keep them around (perhaps to inspect the reason
@@ -23,7 +46,7 @@ module Delayed
     self.worker_name = "host:#{Socket.gethostname} pid:#{Process.pid}" rescue "pid:#{Process.pid}"
 
     NextTaskSQL         = '(run_at <= ? AND (locked_at IS NULL OR locked_at < ?) OR (locked_by = ?)) AND failed_at IS NULL'
-    NextTaskOrder       = 'priority DESC, run_at ASC'
+    NextTaskOrder       = [ :priority.desc , :run_at.asc ]
 
     ParseObjectFromYaml = /\!ruby\/\w+\:([^\s]+)/
 
@@ -33,7 +56,8 @@ module Delayed
 
     # When a worker is exiting, make sure we don't have any locked jobs.
     def self.clear_locks!
-      update_all("locked_by = null, locked_at = null", ["locked_by = ?", worker_name])
+#      update_all("locked_by = null, locked_at = null", ["locked_by = ?", worker_name])
+      Job.all( :locked_by => worker_name ).update( :locked_by => nil , :locked_at => nil )
     end
 
     def failed?
@@ -42,7 +66,7 @@ module Delayed
     alias_method :failed, :failed?
 
     def payload_object
-      @payload_object ||= deserialize(self['handler'])
+      @payload_object ||= deserialize( handler )
     end
 
     def name
@@ -57,23 +81,23 @@ module Delayed
     end
 
     def payload_object=(object)
-      self['handler'] = object.to_yaml
+      attribute_set( :handler , object.to_yaml )
     end
 
     # Reschedule the job in the future (when a job fails).
     # Uses an exponential scale depending on the number of failed attempts.
     def reschedule(message, backtrace = [], time = nil)
       if self.attempts < MAX_ATTEMPTS
-        time ||= Job.db_time_now + (attempts ** 4) + 5
+        time ||= Time.now + (attempts ** 4) + 5
 
-        self.attempts    += 1
-        self.run_at       = time
-        self.last_error   = message + "\n" + backtrace.join("\n")
-        self.unlock
+        attempts    += 1
+        run_at       = time
+        last_error   = message + "\n" + backtrace.join("\n")
+        unlock
         save!
       else
         logger.info "* [JOB] PERMANENTLY removing #{self.name} because of #{attempts} consequetive failures."
-        destroy_failed_jobs ? destroy : update_attribute(:failed_at, Time.now)
+        destroy_failed_jobs ? destroy : update_attribute(:failed_at => Time.now)
       end
     end
 
@@ -120,12 +144,11 @@ module Delayed
     # Return in random order prevent everyone trying to do same head job at once.
     def self.find_available(limit = 5, max_run_time = MAX_RUN_TIME)
 
-      time_now = db_time_now
+      time_now = Time.now
 
       sql = NextTaskSQL.dup
-
       conditions = [time_now, time_now - max_run_time, worker_name]
-
+      
       if self.min_priority
         sql << ' AND (priority >= ?)'
         conditions << min_priority
@@ -138,10 +161,7 @@ module Delayed
 
       conditions.unshift(sql)
 
-      records = ActiveRecord::Base.silence do
-        find(:all, :conditions => conditions, :order => NextTaskOrder, :limit => limit)
-      end
-
+      records = all( :conditions => conditions, :order => NextTaskOrder, :limit => limit )
       records.sort_by { rand() }
     end
 
@@ -162,18 +182,20 @@ module Delayed
     # Lock this job for this worker.
     # Returns true if we have the lock, false otherwise.
     def lock_exclusively!(max_run_time, worker = worker_name)
-      now = self.class.db_time_now
+      now = Time.now
       affected_rows = if locked_by != worker
         # We don't own this job so we will update the locked_by name and the locked_at
-        self.class.update_all(["locked_at = ?, locked_by = ?", now, worker], ["id = ? and (locked_at is null or locked_at < ?)", id, (now - max_run_time.to_i)])
+        #self.class.update_all(["locked_at = ?, locked_by = ?", now, worker], ["id = ? and (locked_at is null or locked_at < ?)", id, (now - max_run_time.to_i)])
+        Job.all( :conditions => ["id = ? AND (locked_at IS null OR locked_at < ?)", id, (now - max_run_time.to_i)] ).update( :locked_at => now , :locked_by => worker )
       else
         # We already own this job, this may happen if the job queue crashes.
         # Simply resume and update the locked_at
-        self.class.update_all(["locked_at = ?", now], ["id = ? and locked_by = ?", id, worker])
+        #self.class.update_all(["locked_at = ?", now], ["id = ? and locked_by = ?", id, worker])
+        Job.all( :id => id , :locked_by => worker ).update( :locked_at => now )
       end
       if affected_rows == 1
-        self.locked_at    = now
-        self.locked_by    = worker
+        locked_at    = now
+        locked_by    = worker
         return true
       else
         return false
@@ -182,8 +204,8 @@ module Delayed
 
     # Unlock this job (note: not saved to DB)
     def unlock
-      self.locked_at    = nil
-      self.locked_by    = nil
+      locked_at    = nil
+      locked_by    = nil
     end
 
     # This is a good hook if you need to report job processing errors in additional or different ways
@@ -245,17 +267,10 @@ module Delayed
        klass.constantize
     end
 
-    # Get the current time (GMT or local depending on DB)
-    # Note: This does not ping the DB to get the time, so all your clients
-    # must have syncronized clocks.
-    def self.db_time_now
-      (ActiveRecord::Base.default_timezone == :utc) ? Time.now.utc : Time.now
-    end
-
   protected
 
     def before_save
-      self.run_at ||= self.class.db_time_now
+      self.run_at ||= Time.now
     end
 
   end
