@@ -1,3 +1,16 @@
+class String 
+  
+  def constantize
+    names = self.split('::')
+    names.shift if names.empty? || names.first.empty?
+    constant = Object
+    names.each do |name|
+      constant = constant.const_defined?(name) ? constant.const_get(name) : constant.const_missing(name)
+    end
+    constant
+  end
+end
+
 module Delayed
 
   class DeserializationError < StandardError
@@ -13,7 +26,7 @@ module Delayed
     property :attempts,     Integer, :default => 0
     property :handler,      Text
     property :last_error,   String
-    property :run_at,       DateTime
+    property :run_at,       DateTime, :default => DateTime.new
     property :locked_at,    DateTime
     property :locked_by,    String
     property :failed_at,    DateTime
@@ -97,7 +110,7 @@ module Delayed
         save!
       else
         logger.info "* [JOB] PERMANENTLY removing #{self.name} because of #{attempts} consequetive failures."
-        destroy_failed_jobs ? destroy : update_attribute(:failed_at => Time.now)
+        destroy_failed_jobs ? destroy : update_attributes(:failed_at => Time.now)
       end
     end
 
@@ -135,7 +148,7 @@ module Delayed
       end
     
       priority = args.first || 0
-      run_at   = args[1]
+      run_at   = args[1] || DateTime.new(0)
 
       Job.create(:payload_object => object, :priority => priority.to_i, :run_at => run_at)
     end
@@ -162,7 +175,7 @@ module Delayed
       conditions.unshift(sql)
 
       records = all( :conditions => conditions, :order => NextTaskOrder, :limit => limit )
-      records.sort_by { rand() }
+      #records.sort_by { rand() }
     end
 
     # Run the next job we can get an exclusive lock on.
@@ -183,7 +196,7 @@ module Delayed
     # Returns true if we have the lock, false otherwise.
     def lock_exclusively!(max_run_time, worker = worker_name)
       now = Time.now
-      affected_rows = if locked_by != worker
+      updated = if locked_by != worker
         # We don't own this job so we will update the locked_by name and the locked_at
         #self.class.update_all(["locked_at = ?, locked_by = ?", now, worker], ["id = ? and (locked_at is null or locked_at < ?)", id, (now - max_run_time.to_i)])
         Job.all( :conditions => ["id = ? AND (locked_at IS null OR locked_at < ?)", id, (now - max_run_time.to_i)] ).update( :locked_at => now , :locked_by => worker )
@@ -193,7 +206,8 @@ module Delayed
         #self.class.update_all(["locked_at = ?", now], ["id = ? and locked_by = ?", id, worker])
         Job.all( :id => id , :locked_by => worker ).update( :locked_at => now )
       end
-      if affected_rows == 1
+      p "Lock updated? ", updated
+      if updated
         locked_at    = now
         locked_by    = worker
         return true
@@ -264,7 +278,7 @@ module Delayed
     # Constantize the object so that ActiveSupport can attempt
     # its auto loading magic. Will raise LoadError if not successful.
     def attempt_to_load(klass)
-       klass.constantize
+       klass.to_s.constantize
     end
 
   protected
