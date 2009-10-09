@@ -3,7 +3,9 @@ module Delayed
     SLEEP = 5
 
     cattr_accessor :logger
-    self.logger = if defined?(Merb::Logger)
+    self.logger = if defined?( DataMapper::Logger )
+      DataMapper.logger
+    elsif defined?(Merb::Logger)
       Merb.logger
     elsif defined?(RAILS_DEFAULT_LOGGER)
       RAILS_DEFAULT_LOGGER

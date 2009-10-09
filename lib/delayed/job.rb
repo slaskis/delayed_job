@@ -21,30 +21,20 @@ module Delayed
   class Job #< ActiveRecord::Base
     include DataMapper::Resource
     
+    storage_names[:default]='delayed_jobs'
+    
     property :id,           Serial
     property :priority,     Integer, :default => 0
     property :attempts,     Integer, :default => 0
     property :handler,      Text
     property :last_error,   String
-    property :run_at,       DateTime, :default => DateTime.new
+    property :run_at,       DateTime, :default => DateTime.new(0)
     property :locked_at,    DateTime
     property :locked_by,    String
     property :failed_at,    DateTime
     
-    #table.integer  :priority, :default => 0
-    #table.integer  :attempts, :default => 0
-    #table.text     :handler
-    #table.string   :last_error
-    #table.datetime :run_at
-    #table.datetime :locked_at
-    #table.string   :locked_by
-    #table.datetime :failed_at
-    #table.timestamps
-    
-    
     MAX_ATTEMPTS = 25
     MAX_RUN_TIME = 4 * 3600 # 4 hours
-    #set_table_name :delayed_jobs
 
     # By default failed jobs are destroyed after too many attempts.
     # If you want to keep them around (perhaps to inspect the reason
@@ -69,7 +59,6 @@ module Delayed
 
     # When a worker is exiting, make sure we don't have any locked jobs.
     def self.clear_locks!
-#      update_all("locked_by = null, locked_at = null", ["locked_by = ?", worker_name])
       Job.all( :locked_by => worker_name ).update( :locked_by => nil , :locked_at => nil )
     end
 
@@ -175,7 +164,6 @@ module Delayed
       conditions.unshift(sql)
 
       records = all( :conditions => conditions, :order => NextTaskOrder, :limit => limit )
-      #records.sort_by { rand() }
     end
 
     # Run the next job we can get an exclusive lock on.
@@ -198,12 +186,10 @@ module Delayed
       now = Time.now
       updated = if locked_by != worker
         # We don't own this job so we will update the locked_by name and the locked_at
-        #self.class.update_all(["locked_at = ?, locked_by = ?", now, worker], ["id = ? and (locked_at is null or locked_at < ?)", id, (now - max_run_time.to_i)])
         Job.all( :conditions => ["id = ? AND (locked_at IS null OR locked_at < ?)", id, (now - max_run_time.to_i)] ).update( :locked_at => now , :locked_by => worker )
       else
         # We already own this job, this may happen if the job queue crashes.
         # Simply resume and update the locked_at
-        #self.class.update_all(["locked_at = ?", now], ["id = ? and locked_by = ?", id, worker])
         Job.all( :id => id , :locked_by => worker ).update( :locked_at => now )
       end
       p "Lock updated? ", updated
